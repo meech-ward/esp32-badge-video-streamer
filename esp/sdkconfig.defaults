@@ -1,4 +1,4 @@
-# Tufty video streamer: Seeed XIAO ESP32-S3 Sense (8 MB flash, 8 MB octal PSRAM, OV2640/OV5640).
+# ESP32 badge video streamer: Seeed XIAO ESP32-S3 Sense (8 MB flash, 8 MB octal PSRAM, OV2640/OV5640).
 # Only deviations from IDF v5.5.1 defaults. `sdkconfig` itself is generated
 # and ignored; delete it after editing this file so the change is picked up.
 

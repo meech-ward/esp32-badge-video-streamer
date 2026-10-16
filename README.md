@@ -1,4 +1,4 @@
-# Tufty video streamer
+# ESP32 badge video streamer
 
 Live video from a **Seeed XIAO ESP32-S3 Sense** to a **Pimoroni Tufty 2350**
 running stock Badgeware. The ESP32 creates a Wi-Fi hotspot; the badge joins it

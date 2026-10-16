@@ -15,7 +15,7 @@ static_assert(sizeof(STREAM_AP_SSID) - 1 >= 1 && sizeof(STREAM_AP_SSID) - 1 <= 3
               "SSID must be 1..32 characters");
 
 extern "C" void app_main(void) {
-    ESP_LOGI("main", "Tufty video streamer boot, reset reason %d", static_cast<int>(esp_reset_reason()));
+    ESP_LOGI("main", "ESP32 badge video streamer boot, reset reason %d", static_cast<int>(esp_reset_reason()));
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());

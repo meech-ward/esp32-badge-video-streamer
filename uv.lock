@@ -150,7 +150,7 @@ wheels = [
 ]
 
 [[package]]
-name = "tufty-video-streamer"
+name = "esp32-badge-video-streamer"
 version = "0.1.0"
 source = { virtual = "." }
 

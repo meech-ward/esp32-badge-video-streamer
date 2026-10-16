@@ -1,5 +1,5 @@
 [project]
-name = "tufty-video-streamer"
+name = "esp32-badge-video-streamer"
 version = "0.1.0"
 description = "Direct ESP32-S3 camera video streaming to stock Tufty Badgeware"
 requires-python = ">=3.10"

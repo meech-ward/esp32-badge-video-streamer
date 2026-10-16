@@ -1,4 +1,4 @@
-menu "Tufty video streamer"
+menu "ESP32 badge video streamer"
 
     config STREAMER_AP_CHANNEL
         int "SoftAP Wi-Fi channel (fixed)"
