@@ -1,0 +1,30 @@
+menu "Tufty video streamer"
+
+    config STREAMER_AP_CHANNEL
+        int "SoftAP Wi-Fi channel (fixed)"
+        range 1 13
+        default 6
+        help
+            Fixed so the badge never scans. 1, 6 and 11 do not overlap.
+
+    config STREAMER_CAM_VFLIP
+        bool "Flip the camera image vertically"
+        default n
+
+    config STREAMER_CAM_HMIRROR
+        bool "Mirror the camera image horizontally"
+        default n
+
+    config STREAMER_DEFAULT_FRAMESIZE
+        int "Frame-size code at boot (0 QQVGA, 1 QVGA, 2 240x240, 3 VGA)"
+        range 0 3
+        default 0
+        help
+            A client's HELLO overrides this.
+
+    config STREAMER_DEFAULT_QUALITY
+        int "JPEG quality at boot (4..63, lower is better)"
+        range 4 63
+        default 6
+
+endmenu

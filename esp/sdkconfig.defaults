@@ -1,0 +1,54 @@
+# Tufty video streamer: Seeed XIAO ESP32-S3 Sense (8 MB flash, 8 MB octal PSRAM, OV2640/OV5640).
+# Only deviations from IDF v5.5.1 defaults. `sdkconfig` itself is generated
+# and ignored; delete it after editing this file so the change is picked up.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- CPU, compiler, RTOS ---
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# 1 ms ticks keep frame polling and select() timeouts precise.
+CONFIG_FREERTOS_HZ=1000
+
+# --- Flash and partitions (single factory app) ---
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- Octal PSRAM; large allocations (camera frame buffers) go there ---
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# Wi-Fi/lwIP buffers stay in internal RAM: it is fast and there is room,
+# because the frame buffers live in PSRAM.
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is not set
+
+# --- Diagnostic logs on native USB ---
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# --- Wi-Fi / lwIP tuned for TX throughput (one JPEG stream out) ---
+CONFIG_ESP_WIFI_IRAM_OPT=y
+CONFIG_ESP_WIFI_RX_IRAM_OPT=y
+CONFIG_LWIP_IRAM_OPTIMIZATION=y
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
+CONFIG_ESP_WIFI_TX_BA_WIN=32
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
+# ~32 KB holds one large QVGA frame, so a whole frame can be queued in one go.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+# SO_LINGER {1,0} lets video_tx reset a dropped client, freeing that 32 KB of
+# queued internal-RAM pbufs at once instead of retransmitting it for minutes.
+CONFIG_LWIP_SO_LINGER=y
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+
+# --- Camera (espressif/esp32-camera) ---
+# Its frame-processing task runs on core 1, away from Wi-Fi interrupts.
+CONFIG_CAMERA_CORE1=y
+CONFIG_OV3660_SUPPORT=y
+CONFIG_OV2640_SUPPORT=y
+CONFIG_OV5640_SUPPORT=y

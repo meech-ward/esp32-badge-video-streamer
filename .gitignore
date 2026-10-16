@@ -1,0 +1,21 @@
+# Generated private Wi-Fi credentials
+esp/main/wifi_secrets.h
+.wifi-secrets-*
+tufty/video_streamer/wifi_config.py
+
+# Toolchains, generated dependencies and builds
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+*.mpy
+esp/build/
+esp/managed_components/
+esp/sdkconfig
+esp/sdkconfig.old
+esp/host_test/build/
+receipts/emulator/
+backups/
+.DS_Store
+._*

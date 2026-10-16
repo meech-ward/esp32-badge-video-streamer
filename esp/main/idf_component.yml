@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=5.5,<5.6"
+  # Pinned: the camera driver's buffer sizing and task pinning were checked
+  # against this release line. dependencies.lock records the exact version.
+  espressif/esp32-camera: "~2.1.8"
