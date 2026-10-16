@@ -4,6 +4,8 @@ Live video from a **Seeed XIAO ESP32-S3 Sense** to a **Pimoroni Tufty 2350**
 running stock Badgeware. The ESP32 creates a Wi-Fi hotspot; the badge joins it
 and displays the camera feed. No router or Internet connection is needed.
 
+<a href="https://x.com/wesbos/status/2111109101174624669"><img src="docs/assets/wes-bos-tweet.jpg" alt="Wes Bos (@wesbos) posting about live camera video on a conference badge." width="480"></a>
+
 **B** toggles the FPS/statistics overlay. **HOME** exits. There are no remote
 controls, photo storage, or additional badge apps.
 
