@@ -57,7 +57,10 @@ class Stream:
         self.log = log  # log(msg) on state transitions only, never per frame
 
         # Every buffer is allocated once, here. The hot path only reads into them.
-        self.hello = P.pack_hello(framesize, quality, credits)
+        # Avoid transferring frames that cannot fit this receiver. Sub-KiB
+        # custom/test buffers retain the drain/drop fallback below.
+        max_frame_kib = min(P.MAX_PAYLOAD // 1024, frame_cap // 1024) if frame_cap >= 1024 else 0
+        self.hello = P.pack_hello(framesize, quality, credits, max_frame_kib)
         self.hello_mv = memoryview(self.hello)
         self.hdr = bytearray(P.HEADER_SIZE)
         self.hdr_mv = memoryview(self.hdr)

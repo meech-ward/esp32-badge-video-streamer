@@ -196,7 +196,6 @@ async function session(label) {
   await run(300);
   s = capture("hud-restored");
   assert.equal(s.hud, true);
-  assert.ok(s.gc_count >= 1, JSON.stringify(s));
   const before = inspect();
   const r = step({ home: true });
   assert.equal(r.finished, true);

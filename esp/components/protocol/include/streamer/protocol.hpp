@@ -59,18 +59,24 @@ struct Hello {
     uint8_t framesize = kFsQqvga;
     uint8_t quality = 6;
     uint8_t credits = 1;
+    uint16_t max_frame_kib = 0;  // zero retains the original 128 KiB limit
+
+    constexpr uint32_t payload_limit() const {
+        return max_frame_kib ? static_cast<uint32_t>(max_frame_kib) * 1024 : kMaxPayload;
+    }
 };
 
 // Returns false (and writes nothing) for out-of-range fields, like pack_hello's ProtocolError.
 inline bool pack_hello(uint8_t* out, const Hello& h) {
-    if (!valid_framesize(h.framesize) || !valid_quality(h.quality) || !valid_credits(h.credits)) return false;
+    if (!valid_framesize(h.framesize) || !valid_quality(h.quality) || !valid_credits(h.credits) ||
+        h.max_frame_kib > kMaxPayload / 1024) return false;
     out[0] = 'V';
     out[1] = 'H';
     out[2] = kVersion;
     out[3] = h.framesize;
     out[4] = h.quality;
     out[5] = h.credits;
-    detail::put_u16(out + 6, 0);
+    detail::put_u16(out + 6, h.max_frame_kib);
     return true;
 }
 
@@ -78,10 +84,12 @@ inline bool unpack_hello(const uint8_t* buf, size_t len, Hello& out) {
     if (len != kHelloSize) return false;
     if (buf[0] != 'V' || buf[1] != 'H' || buf[2] != kVersion) return false;
     if (!valid_framesize(buf[3]) || !valid_quality(buf[4]) || !valid_credits(buf[5])) return false;
-    if (detail::get_u16(buf + 6) != 0) return false;
+    const uint16_t max_frame_kib = detail::get_u16(buf + 6);
+    if (max_frame_kib > kMaxPayload / 1024) return false;
     out.framesize = buf[3];
     out.quality = buf[4];
     out.credits = buf[5];
+    out.max_frame_kib = max_frame_kib;
     return true;
 }
 

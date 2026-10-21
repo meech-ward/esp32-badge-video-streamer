@@ -1,0 +1,55 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "production",
+      "displayName": "Optimized video receiver",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/production",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NATIVE_DIAGNOSTICS": "OFF",
+        "NATIVE_TRACE_GAPS": "OFF",
+        "NATIVE_TRACE_TCP_INGRESS": "OFF",
+        "NATIVE_JPEG_QUALITY": "6",
+        "NATIVE_RGB565_LE": "ON",
+        "NATIVE_JPEG_DSP": "ON",
+        "NATIVE_JPEG_SRAM": "ON",
+        "NATIVE_CYW43_BOUNDED_TX": "ON",
+        "NATIVE_JPEG_PSRAM": "ON",
+        "NATIVE_PREFETCH_LEAD_US": "12000",
+        "NATIVE_TCP_TIMER_MS": "10"
+      }
+    },
+    {
+      "name": "diagnostic",
+      "displayName": "Video timing diagnostics",
+      "inherits": "production",
+      "binaryDir": "${sourceDir}/build/diagnostic",
+      "cacheVariables": {
+        "NATIVE_DIAGNOSTICS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "production",
+      "configurePreset": "production",
+      "targets": [
+        "native_video_streamer"
+      ]
+    },
+    {
+      "name": "diagnostic",
+      "configurePreset": "diagnostic",
+      "targets": [
+        "native_video_streamer"
+      ]
+    }
+  ]
+}

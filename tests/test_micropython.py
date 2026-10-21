@@ -23,10 +23,12 @@ import stream_protocol as P
 hello = P.pack_hello(P.FS_QVGA, 6, 1)
 assert hello == b"VH\x01\x01\x06\x01\x00\x00", hello
 assert P.unpack_hello(hello) == (1, 6, 1)
+bounded = P.pack_hello(P.FS_QVGA, 6, 1, 64)
+assert bounded[-2:] == b"\x40\x00" and P.unpack_hello(bounded) == (1, 6, 1)
 header = P.pack_header(P.TYPE_FRAME, 0x1234, 160, 999, 5000)
 assert len(header) == 16
 assert P.unpack_header(header) == (1, 0x1234, 160, 999, 5000)
-for bad in (b"VS", b"VH\x01\x01\x06\x01\x01\x00"):
+for bad in (b"VS", b"VH\x01\x01\x06\x01\x81\x00"):
     try:
         if len(bad) == 8:
             P.unpack_hello(bad)

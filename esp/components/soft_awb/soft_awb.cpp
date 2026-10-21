@@ -22,6 +22,7 @@ constexpr UBaseType_t kPrio = 2;
 // the last write (at low fps a sampled frame can be several hundred ms old),
 // so frames are also gated on their capture time (streamer::awb::FreshGate).
 constexpr uint32_t kPeriodMs = 330;
+constexpr uint32_t kSettledPeriodMs = CONFIG_STREAMER_AWB_SETTLED_PERIOD_MS;
 // WHY 50 ms after the write: the frame timestamp is taken at capture start,
 // so a frame that starts after the write is processed with the new gains if
 // the DSP applies them at once; the margin also covers a DSP that latches them
@@ -55,8 +56,9 @@ void awb_task(void*) {
     camera_source::soft_gains(r, g, b);
     ctl.reset({static_cast<float>(r), static_cast<float>(g), static_cast<float>(b)});
     gate.wrote(esp_timer_get_time());
+    bool settled = false;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(kPeriodMs));
+        vTaskDelay(pdMS_TO_TICKS(settled ? kSettledPeriodMs : kPeriodMs));
         video_tx::Sample f;
         bool got = false;
         for (int i = 0; i <= kMaxStale; ++i) {
@@ -78,7 +80,9 @@ void awb_task(void*) {
         esp_jpeg_image_output_t img = {};
         if (esp_jpeg_decode(&cfg, &img) != ESP_OK) continue;
         const streamer::awb::Means m = streamer::awb::analyse(s_rgb, static_cast<size_t>(img.width) * img.height);
-        if (ctl.step(m) == streamer::awb::Result::Adjusted) {
+        const auto result = ctl.step(m);
+        settled = result == streamer::awb::Result::Settled;
+        if (result == streamer::awb::Result::Adjusted) {
             camera_source::write_soft_gains(ctl.reg(0), ctl.reg(1), ctl.reg(2));
             // Gate even a partial failed write: a register may have changed.
             gate.wrote(esp_timer_get_time());

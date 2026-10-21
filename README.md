@@ -1,23 +1,33 @@
 # ESP32 badge video streamer
 
-Live video from a **Seeed XIAO ESP32-S3 Sense** to a **Pimoroni Tufty 2350**
-running stock Badgeware. The ESP32 creates a Wi-Fi hotspot; the badge joins it
-and displays the camera feed. No router or Internet connection is needed.
+Live video from a **Seeed XIAO ESP32-S3 Sense** to a **Pimoroni Tufty 2350**.
+The ESP32 creates its own Wi-Fi hotspot; the badge joins and displays the
+camera feed. No router or Internet connection is needed.
 
 <a href="https://x.com/wesbos/status/2111109101174624669"><img src="docs/assets/wes-bos-tweet.jpg" alt="Wes Bos (@wesbos) posting about live camera video on a conference badge." width="480"></a>
 
-**B** toggles the FPS/statistics overlay. **HOME** exits. There are no remote
-controls, photo storage, or additional badge apps.
+**B** toggles the FPS/statistics HUD. This project sends video only, with no
+motor controls or control channel. For driving a robot, use
+[ESP32 badge RC](https://github.com/meech-ward/esp32-badge-rc).
 
-## Requirements
+## Choose the badge receiver
 
-- XIAO ESP32-S3 Sense with 8 MB flash, 8 MB octal PSRAM, and OV2640 or OV5640.
-- Tufty 2350 with stock [Badgeware v3.0.2](https://github.com/pimoroni/tufty2350/releases/tag/v3.0.2),
-  the runtime checked by this project. The viewer uses its in-memory JPEG decoder.
-- Power for both devices, Python 3.10+, and
-  [ESP-IDF v5.5.1](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32s3/get-started/index.html).
+| Receiver | Firmware | Default video |
+| --- | --- | --- |
+| [Badgeware app](tufty/video_streamer/) | Keeps stock Badgeware v3.0.2 | 160×120, JPEG q6 |
+| [Native C++ receiver](native/README.md) | Replaces Badgeware while installed | 320×240, JPEG q6 |
+
+Both reconnect automatically and use the same camera firmware and protocol.
+The native option uses two cores, optimized JPEG decoding and overlapped frame
+reception for the performance pipeline developed in the RC project. HOME exits
+the stock app; on native firmware it enters USB BOOTSEL.
 
 ## Setup
+
+You need a XIAO ESP32-S3 Sense with antenna, 8 MB flash, 8 MB octal PSRAM and
+an OV2640 or OV5640 camera; a Tufty 2350; and power for both devices.
+Install Python 3.10+, [uv](https://docs.astral.sh/uv/) for host tools/tests, and
+[ESP-IDF v5.5.1](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32s3/get-started/index.html).
 
 From the repository root, generate matching private Wi-Fi settings:
 
@@ -25,55 +35,55 @@ From the repository root, generate matching private Wi-Fi settings:
 python3 tools/make_secrets.py
 ```
 
-The hotspot is `tufty-video`. Its random password is written to ignored
-`esp/main/wifi_secrets.h` and `tufty/video_streamer/wifi_config.py`.
-To change it later, use `--force`, then rebuild and update both devices.
+The hotspot is `tufty-video`. Its random password is written to ignored camera,
+Badgeware and native configuration files. To regenerate all three, use `--force`,
+then rebuild/update both boards. Existing users adding native firmware can copy
+`native/secrets.example.h` to `native/secrets.h` and match their camera settings.
 
-Activate your ESP-IDF environment, then build and flash **the camera** using
-its serial port:
+Activate ESP-IDF, then build and flash **the camera** using its serial port:
 
 ```sh
 idf.py -C esp build
 idf.py -C esp -p <camera-port> flash
 ```
 
-Install **the badge app** while keeping stock firmware:
+For **stock Badgeware v3.0.2**, enter Disk Mode by double-tapping RESET, copy
+`tufty/video_streamer/` into the volume's `apps/` directory, eject and open
+**video_streamer**. Keep `apps/menu` for startup. The example Wi-Fi file can be
+omitted. The optional [macOS installer](docs/development.md#badgeware-installation)
+can install just this app or remove other apps with backups.
 
-1. Enter Disk Mode by double-tapping RESET, then back up the mounted USB volume.
-2. Copy `tufty/video_streamer/` into the volume's `apps/` directory.
-   `wifi_config.example.py` is an example and can be omitted.
-3. To keep only the viewer, remove other app folders while preserving
-   **`apps/menu` and `apps/video_streamer`**. The stock menu is needed for startup.
-4. Eject the volume and open **video_streamer** from the launcher.
+For **native firmware**, follow the [native build/install guide](native/README.md).
+Builds need Pico SDK 2.2.0, a Cortex-M33 toolchain and the pinned JPEGDEC sources.
+Update the camera before installing these viewers: the new HELLO frame-size
+limit is accepted by current firmware, while the earlier camera expected zero.
 
-On **macOS**, the installer automates copying, verification, backup of other
-apps, and ejecting. It needs `mpremote` on PATH (`uv tool install mpremote`):
+## Watch on a Mac
+
+Turn off badge streaming, join `tufty-video` Wi-Fi, and run from this folder:
 
 ```sh
-python3 tools/install_tufty.py --only-app \
-  --backup-dir "$HOME/tufty-backups/before-video-streamer"
+uv run python -m host.relay --size qvga --quality 6 --credits 1
 ```
 
-Use a new backup directory outside the badge volume. Add `--no-reset` if Disk
-Mode is already mounted, `--port <badge-port>` to select a device, or
-`--dry-run` to preview changes on a mounted volume. For app-only updates, omit
-`--only-app` and `--backup-dir`.
+Open [the viewer](http://127.0.0.1:8090/). Stop with Ctrl-C before using the
+badge again. The ESP accepts **one direct video receiver** at a time; a new
+connection replaces the old one. Several browser windows can share the Mac
+relay's single connection. USB is not needed to watch.
 
-## Streaming and statistics
+## How it streams
 
-Defaults are **160×120, JPEG quality 6, one frame of credit**. The ESP keeps
-capturing into PSRAM and sends the latest JPEG over TCP. The badge decodes it
-directly into screen RAM and immediately returns a credit, allowing transfer
-to overlap display work. Old captures are dropped instead of accumulating.
-Preallocated buffers, bounded reads, scheduled garbage collection, and stale
-link detection keep memory use predictable and allow automatic reconnection.
-Software white balance and the OV5640 low-resolution clock tuning are retained.
+The camera keeps three capture buffers and one latest completed frame. A
+receiver grants frame credits; the ESP sends the newest JPEG and skips stale
+captures instead of building a playback queue. Camera waits, socket work and
+retries are bounded. Software white balance settles to a slower sampling rate.
 
-The HUD starts visible: `fps` is displayed frames/second; `n` receive time,
-`d` decode time, `s` display/input time, `g` garbage collection time, and `a`
-capture-to-send age are in milliseconds; `k` is JPEG size in KiB. Frame age is
-only part of camera-to-screen latency. Connection messages remain visible with
-the HUD hidden. See the [wire protocol](docs/protocol.md) for transport details.
+Stock Badgeware uses preallocated receive buffers, cached HUD graphics and
+infrequent planned garbage collection. Native firmware overlaps receiving,
+JPEG decoding and display DMA with two guarded compressed inputs. Production
+builds omit detailed diagnostics and retain the HUD. Displayed FPS and partial
+frame-age statistics do not measure complete camera-to-screen latency.
+See the [wire protocol](docs/protocol.md) for details.
 
 ## Development
 
@@ -83,9 +93,11 @@ uv run pytest -q
 make -C esp/host_test
 ```
 
-`esp/` contains camera firmware, `tufty/video_streamer/` the installable app,
-and `tools/` setup helpers. Tests and their fixtures stay on the host.
-See [development notes](docs/development.md) for configuration, optional graphics
-checks, and verification limits.
+Builds and host tests cover the port; the newly adapted video-only firmware
+still needs physical streaming qualification. RC hardware measurements are
+source provenance, not a measured frame rate for this variant. See
+[development notes](docs/development.md) for dependency setup, optional graphics
+checks and verification limits.
 
-[MIT licensed](LICENSE).
+[MIT licensed](LICENSE). Linked dependencies retain their own notices; see
+[native/THIRD_PARTY.md](native/THIRD_PARTY.md).

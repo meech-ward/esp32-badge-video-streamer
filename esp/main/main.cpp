@@ -1,5 +1,6 @@
 // Camera capture is initialized before Wi-Fi to reserve contiguous DMA RAM.
 #include "camera_source.hpp"
+#include "console.hpp"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -39,6 +40,9 @@ extern "C" void app_main(void) {
                          false
 #endif
     });
+    // Preserve camera DMA allocation priority; route runtime logs through the
+    // bounded queue before networking and its streaming tasks can start.
+    console::start();
     ESP_ERROR_CHECK(wifi_ap::start({STREAM_AP_SSID, STREAM_AP_PASSWORD, CONFIG_STREAMER_AP_CHANNEL, 2}));
     video_tx::start();
     // AWB samples frames already captured by video_tx; it never competes for

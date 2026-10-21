@@ -20,9 +20,24 @@ $(BUILD)/test_awb: test_awb.cpp ../components/camera_source/include/streamer/whi
 	mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) $(SANITIZERS) $(INC) test_awb.cpp -o $@
 
-run: $(BUILD)/test_protocol $(BUILD)/test_awb
+$(BUILD)/test_stream: test_stream.cpp $(wildcard ../components/protocol/include/streamer/*.hpp)
+	mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(SANITIZERS) $(INC) test_stream.cpp -o $@
+
+$(BUILD)/test_camera_clock: test_camera_clock.cpp ../components/protocol/include/streamer/ov5640_clock.hpp
+	mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(SANITIZERS) $(INC) test_camera_clock.cpp -o $@
+
+$(BUILD)/test_camera_banding: test_camera_banding.cpp ../components/protocol/include/streamer/ov5640_banding.hpp
+	mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) $(SANITIZERS) $(INC) test_camera_banding.cpp -o $@
+
+run: $(BUILD)/test_protocol $(BUILD)/test_awb $(BUILD)/test_stream $(BUILD)/test_camera_clock $(BUILD)/test_camera_banding
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_awb
+	./$(BUILD)/test_stream
+	./$(BUILD)/test_camera_clock
+	./$(BUILD)/test_camera_banding
 
 clean:
 	rm -rf $(BUILD)

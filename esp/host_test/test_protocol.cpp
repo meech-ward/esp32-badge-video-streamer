@@ -15,13 +15,15 @@ void test_vectors() {
     for (const auto& v : vec::kHello) {
         uint8_t packed[kHelloSize] = {};
         const bool ok = pack_hello(packed, {static_cast<uint8_t>(v.fs), static_cast<uint8_t>(v.q),
-                                            static_cast<uint8_t>(v.credits)});
+                                            static_cast<uint8_t>(v.credits), static_cast<uint16_t>(v.max_frame_kib)});
         CHECK(ok == v.ok);
         if (ok) {
             CHECK(std::memcmp(packed, v.data, sizeof packed) == 0);
             Hello h;
             CHECK(unpack_hello(v.data, sizeof v.data, h));
             CHECK(h.framesize == v.fs && h.quality == v.q && h.credits == v.credits);
+            CHECK(h.max_frame_kib == v.max_frame_kib);
+            CHECK(h.payload_limit() == (v.max_frame_kib ? v.max_frame_kib * 1024 : kMaxPayload));
         }
     }
     for (const auto& v : vec::kHeader) {

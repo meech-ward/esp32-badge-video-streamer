@@ -1,0 +1,9 @@
+; Copyright (c) 2026 Pimoroni Ltd. MIT; see THIRD_PARTY.md.
+; Tufty 2350 8-bit 8080 bus: one data byte per two PIO cycles.
+.program st7789_parallel
+.side_set 1
+
+.wrap_target
+    out pins, 8 side 0
+    nop         side 1
+.wrap

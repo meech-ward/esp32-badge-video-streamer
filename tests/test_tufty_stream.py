@@ -106,7 +106,7 @@ def test_hello_waits_for_connect_then_frame_in_partial_reads():
     clock.t += 5
     # Third send succeeds: HELLO out, then one drain pass reads up to the first AGAIN.
     assert st.poll(clock.t) is False
-    assert bytes(sock.sent) == P.pack_hello(P.FS_QQVGA, 6, 1)
+    assert bytes(sock.sent) == P.pack_hello(P.FS_QQVGA, 6, 1, 32)
     assert st.state == S.HEADER and st.got == 10  # EAGAIN mid-header
     assert st.poll(clock.t) is False and st.state == S.PAYLOAD  # EAGAIN mid-payload
     assert st.got == 2000 - P.HEADER_SIZE
@@ -187,7 +187,7 @@ def test_corrupt_magic_reconnects_with_backoff_and_fresh_hello():
     assert st.poll(clock.t) is False and st.state == S.BACKOFF
     clock.t += 1
     assert st.poll(clock.t) is True
-    assert bytes(s2.sent[:P.HELLO_SIZE]) == P.pack_hello(P.FS_QQVGA, 6, 1)
+    assert bytes(s2.sent[:P.HELLO_SIZE]) == P.pack_hello(P.FS_QQVGA, 6, 1, 32)
     assert st.connects == 2 and st.backoff_ms == S.BACKOFF_MIN_MS
 
 
@@ -282,7 +282,7 @@ def test_connect_timeout_retries_with_a_fresh_socket_after_the_minimum_backoff()
     clock.t += 1
     st.poll(clock.t)
     assert st.connects == 2 and st.connected() and st.statuses == 1
-    assert bytes(ok.sent[:P.HELLO_SIZE]) == P.pack_hello(P.FS_QQVGA, 6, 1)
+    assert bytes(ok.sent[:P.HELLO_SIZE]) == P.pack_hello(P.FS_QQVGA, 6, 1, 32)
     assert clock.t - t0 == S.CONNECT_MS + S.BACKOFF_MIN_MS  # ~1.25 s, not a Wi-Fi cycle
 
 

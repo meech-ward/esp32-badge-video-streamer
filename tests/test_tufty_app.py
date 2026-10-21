@@ -41,6 +41,7 @@ class Socket:
 
 class Screen:
     width, height = 160, 120
+    font = "test bitmap font"
 
     def __init__(self):
         self.ops = []
@@ -59,6 +60,9 @@ class Screen:
 
     def text(self, text, *args):
         self.ops.append(("text", text) + args)
+
+    def blit(self, sprite, x, y):
+        self.ops.append(("blit", x, y))
 
 
 class Wifi:
@@ -97,6 +101,7 @@ def rig(monkeypatch):
                         types.SimpleNamespace(SSID="test", PASSWORD="placeholder"))
     monkeypatch.setattr(builtins, "screen", screen, raising=False)
     monkeypatch.setattr(builtins, "color", types.SimpleNamespace(rgb=lambda *rgb: rgb), raising=False)
+    monkeypatch.setattr(builtins, "image", lambda *args: Screen(), raising=False)
     monkeypatch.setattr(builtins, "badge", badge, raising=False)
     monkeypatch.setattr(builtins, "LORES", 1, raising=False)
     monkeypatch.setattr(builtins, "BUTTON_B", "B", raising=False)
@@ -118,8 +123,8 @@ def test_decode_returns_credit_before_presentation_and_hide_restores_camera(rig)
     sock.feed()
     app.update()
     assert app.shown == 1
-    assert bytes(sock.sent) == P.pack_hello(P.FS_QQVGA, 6, 1) + P.CREDIT
-    assert rig.screen.ops[-4][0] == "rect"  # decoder ran before HUD drawing
+    assert bytes(sock.sent) == P.pack_hello(P.FS_QQVGA, 6, 1, 32) + P.CREDIT
+    assert [op[0] for op in rig.screen.ops[-3:]] == ["load", "blit", "blit"]
     rig.screen.ops.clear()
     rig.presses.add("B")
     app.update()
@@ -179,3 +184,11 @@ def test_home_cleanup_closes_tcp_and_disconnects_wifi(rig):
     rig.namespace["on_exit"]()
     assert rig.sockets[0].closed and rig.app.wifi.stopped
     assert rig.namespace["debug_state"]()["state"] == "idle"
+
+
+def test_default_frame_loop_does_not_print_diagnostics(rig, capsys):
+    for seq in range(3):
+        rig.sockets[0].feed(seq=seq)
+        rig.app.update()
+        rig.clock.t += 5000
+    assert capsys.readouterr().out == ""

@@ -9,6 +9,7 @@ from telemetry import Logger, Stats
 
 class FakeScreen:
     width, height = 160, 120
+    font = "test bitmap font"
 
     def __init__(self):
         self.pen = None
@@ -23,12 +24,22 @@ class FakeScreen:
     def text(self, text, x, y):
         self.ops.append(("text", self.pen, text, x, y))
 
+    def blit(self, sprite, x, y):
+        self.ops.append(("blit", sprite, x, y))
+
+
+class FakeCanvas(FakeScreen):
+    def __init__(self, width, height, pen=None):
+        super().__init__()
+        self.width, self.height, self.pen = width, height, pen
+
 
 @pytest.fixture
 def scr(monkeypatch):
     scr = FakeScreen()
     monkeypatch.setattr(builtins, "screen", scr, raising=False)
     monkeypatch.setattr(builtins, "color", types.SimpleNamespace(rgb=lambda *rgb: rgb), raising=False)
+    monkeypatch.setattr(builtins, "image", FakeCanvas, raising=False)
     return scr
 
 
@@ -52,10 +63,10 @@ def test_hud_starts_visible_and_b_toggles_all_stats(scr, overlay):
     ov.refresh(0, app)
     ov.draw(app, 0)
     assert ov.visible
-    assert [op[2] for op in scr.ops if op[0] == "text"] == [
+    assert [op[2] for sprite in (ov.top_sprite, ov.bottom_sprite)
+            for op in sprite.ops if op[0] == "text"] == [
         "0.0fps n7 d9", "s11 g2 a4 3.5k"]
-    assert [op[2:] for op in scr.ops if op[0] == "rect"] == [
-        (0, 0, 160, 12), (0, 108, 160, 12)]
+    assert [op[2:] for op in scr.ops if op[0] == "blit"] == [(0, 0), (0, 108)]
     ov.toggle()
     scr.ops.clear()
     ov.draw(app, 1)
@@ -63,7 +74,21 @@ def test_hud_starts_visible_and_b_toggles_all_stats(scr, overlay):
     ov.toggle()
     ov.refresh(2, app)
     ov.draw(app, 2)
-    assert ov.visible and len(scr.ops) == 4
+    assert ov.visible and len(scr.ops) == 2
+
+
+def test_idle_updates_do_not_redraw_or_rasterize_unchanged_hud(scr, overlay):
+    app = app_stub()
+    overlay.refresh(0, app)
+    overlay.draw(app, 0)
+    raster_count = sum(len(s.ops) for s in (overlay.top_sprite, overlay.bottom_sprite))
+    scr.ops.clear()
+    overlay.refresh(250, app)
+    overlay.draw(app, 250, frame_changed=False)
+    assert scr.ops == []
+    assert sum(len(s.ops) for s in (overlay.top_sprite, overlay.bottom_sprite)) == raster_count
+    overlay.draw(app, 251, frame_changed=True)
+    assert len(scr.ops) == 2 and all(op[0] == "blit" for op in scr.ops)
 
 
 def test_frame_rate_counts_presented_frames_and_text_refresh_is_bounded(overlay):

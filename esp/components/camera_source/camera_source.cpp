@@ -1,4 +1,5 @@
 #include "camera_source.hpp"
+#include "camera_timed_get.h"
 
 #include <atomic>
 #include <cstring>
@@ -6,11 +7,18 @@
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#ifdef CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY
+#include "driver/i2c.h"
+#else
+#include "driver/i2c_master.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "streamer/protocol.hpp"
 #include "streamer/white_balance.hpp"
+#include "streamer/ov5640_clock.hpp"
+#include "streamer/ov5640_banding.hpp"
 
 namespace camera_source {
 namespace {
@@ -34,9 +42,11 @@ constexpr int XCLK_HZ = 20'000'000;
 // WHY a fixed JPEG buffer: the automatic size (w*h/5) is too small at QQVGA
 // with low quality numbers, and frame buffers are sized once at init. 128 KiB
 // is the protocol's MAX_PAYLOAD, so every frame that fits is also sendable.
-// Two driver buffers plus the send copy in PSRAM is 384 KiB of 8 MiB.
+// Three driver buffers and the send copy use 512 KiB of 8 MiB PSRAM;
+// the latest-frame queue stays at one so this adds no playback backlog.
 constexpr size_t JPEG_BUF = streamer::kMaxPayload;
-constexpr int FB_COUNT = 2;
+constexpr int FB_COUNT = CONFIG_STREAMER_CAMERA_FB_COUNT;
+static_assert(FB_COUNT == 2 || FB_COUNT == 3);
 
 // After a frame-size change the frames already captured (one queued, one in
 // capture) still have the old size; drop them so headers and payload agree.
@@ -45,7 +55,7 @@ constexpr int DROP_AFTER_RESIZE = FB_COUNT;
 constexpr framesize_t kFsMap[streamer::kFsCount] = {FRAMESIZE_QQVGA, FRAMESIZE_QVGA, FRAMESIZE_240X240,
                                                FRAMESIZE_VGA};
 
-bool s_ready = false;
+std::atomic<bool> s_ready{false};
 SemaphoreHandle_t s_lock = nullptr;  // serialises sensor (SCCB) register writes
 std::atomic<uint8_t> s_fs{0};
 std::atomic<uint8_t> s_q{6};
@@ -55,29 +65,161 @@ uint8_t* s_copy = nullptr;  // PSRAM, JPEG_BUF bytes; backs the Frame from grab(
 
 // ------------------------------------------------------------- clock ----
 
-// Sensor PLL fields; only the measured OV5640 QQVGA override is used.
+// The sensor PLL fields accepted by the camera driver.
 struct Pll {
     int mult, sys_div, pre_div, root_2x, pclk_root_div, pclk_manual, pclk_div;
 };
 
-// OV5640 at QQVGA (kFs code 0): SYSCLK 80 MHz instead of the driver's 40 MHz.
-// WHY: esp32-camera's set_framesize writes set_pll(mult 160, sys_div 4,
-// pre_div 2, root_2x 0, pclk_root_div 2, pclk_manual 1, pclk_div 4) = SYSCLK
-// 40 MHz, PCLK 10 MHz for sizes below QVGA, which with the binned 2060 x 984
-// timing is 19.5-20 fps at 160x120 (measured 2026-10-07, XCLK 20 MHz, JPEG
-// q6, 4.1 KB frames). sys_div 2 with pclk_div 8 (SYSCLK 80 MHz, PCLK still
-// 10 MHz) gave 34-36 fps with valid 3.2-3.5 KB frames and a snapshot that
-// decodes to the real scene. The failure points around it: pclk_div 4 (PCLK
-// 20 MHz) ran 36 then 25 fps, less stable; mult 200 (100 MHz) and 240
-// (120 MHz) gave 40 fps of 1.2 KB frames that decode to a flat purple blob
-// (broken readout); mult 180 with sys_div 2 (90 MHz) at 320x240 stalled the
-// sensor (0 fps). 80 MHz at 320x240 was 14.5-15.5 fps against the driver's
-// 11-16, and 19-20 fps at 240x240 against 15: no clear gain, so only
-// QQVGA is overridden and the other sizes keep the driver's choice. The
-// driver rewrites the PLL on every set_framesize, so this is re-applied
-// after each one (init and configure()).
-constexpr Pll kOv5640Fs0Pll = {160, 2, 2, 0, 2, 1, 8};
-constexpr uint8_t kOv5640OverrideFs = 0;  // streamer kFs code: 160x120
+// Keep the DVP pixel clock at 10 MHz while speeding sensor processing. With
+// XCLK 20 MHz, the measured profiles are QQVGA SYSCLK 80 MHz and QVGA 70 MHz.
+// QVGA's 2060x984 timing captures 34.5 fps, preserving 320x240 JPEG q6 detail.
+// Both use system divider 1: QQVGA multiplier 80 and QVGA 70 retain the earlier
+// 160 / 2 and 140 / 2 downstream clocks with 800 / 700 MHz VCOs (live checks,
+// 2026-10-20). QVGA 75 MHz lost shadow/colour detail; 80 MHz stopped capture,
+// even with a lower-VCO tuple.
+// Clock arithmetic alone does not establish usable image output. Do not apply
+// these profiles to other sizes/sensors. set_framesize rewrites the PLL, so
+// restore the measured profile after every size change.
+constexpr Pll kOv5640Fs0Pll = {80, 1, 2, 0, 2, 1, 8};
+constexpr Pll kOv5640Fs1Pll = {70, 1, 2, 0, 2, 1, 7};
+
+#if defined(CONFIG_STREAMER_OV5640_BANDING_50HZ) || defined(CONFIG_STREAMER_OV5640_BANDING_60HZ)
+constexpr bool kBandingCorrection = true;
+#else
+constexpr bool kBandingCorrection = false;
+#endif
+
+const Pll* stream_clock(uint8_t fs) {
+    return fs == 0 ? &kOv5640Fs0Pll : fs == 1 ? &kOv5640Fs1Pll : nullptr;
+}
+
+// sensor_t::get_reg cannot reliably report a failed byte read in the pinned
+// driver. Use the public I2C API for checked clock/gain transactions instead.
+// Configured SCCB pins make esp_camera_init create the Kconfig-selected bus.
+#ifdef CONFIG_SCCB_HARDWARE_I2C_PORT1
+constexpr int kSccbPort = 1;
+#else
+constexpr int kSccbPort = 0;
+#endif
+constexpr int kRegisterIoTimeoutMs = 100;
+
+struct SensorRegisterIo {
+    uint8_t address;
+    esp_err_t error = ESP_OK;
+#ifndef CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY
+    i2c_master_dev_handle_t device = nullptr;
+#endif
+
+    bool read(uint16_t reg, uint8_t& value) {
+        const uint8_t command[] = {static_cast<uint8_t>(reg >> 8), static_cast<uint8_t>(reg)};
+#ifdef CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY
+        error = i2c_master_write_read_device(static_cast<i2c_port_t>(kSccbPort), address,
+            command, sizeof command, &value, 1, pdMS_TO_TICKS(kRegisterIoTimeoutMs));
+#else
+        error = i2c_master_transmit_receive(device, command, sizeof command,
+            &value, 1, kRegisterIoTimeoutMs);
+#endif
+        return error == ESP_OK;
+    }
+
+    bool write(uint16_t reg, uint8_t value) {
+        const uint8_t command[] = {static_cast<uint8_t>(reg >> 8), static_cast<uint8_t>(reg), value};
+#ifdef CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY
+        error = i2c_master_write_to_device(static_cast<i2c_port_t>(kSccbPort), address,
+            command, sizeof command, pdMS_TO_TICKS(kRegisterIoTimeoutMs));
+#else
+        error = i2c_master_transmit(device, command, sizeof command, kRegisterIoTimeoutMs);
+#endif
+        return error == ESP_OK;
+    }
+};
+
+// Caller holds s_lock, or is init before other SCCB users start. The new IDF
+// driver permits a temporary same-address device on the existing camera bus.
+esp_err_t open_register_io(SensorRegisterIo& io) {
+#ifndef CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY
+    i2c_master_bus_handle_t bus = nullptr;
+    esp_err_t err = i2c_master_get_bus_handle(static_cast<i2c_port_num_t>(kSccbPort), &bus);
+    if (err != ESP_OK) return err;
+    i2c_device_config_t config = {};
+    config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    config.device_address = io.address;
+    config.scl_speed_hz = CONFIG_SCCB_CLK_FREQ;
+    err = i2c_master_bus_add_device(bus, &config, &io.device);
+    if (err != ESP_OK) return err;
+#else
+    (void)io;
+#endif
+    return ESP_OK;
+}
+
+esp_err_t close_register_io(SensorRegisterIo& io) {
+#ifndef CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY
+    return i2c_master_bus_rm_device(io.device);
+#else
+    (void)io;
+    return ESP_OK;
+#endif
+}
+
+// OV5640 v2.33 section 2.5 specifies PLLADCLK 190..230 MHz. Reset dividers
+// 19/11/30 assume 24 MHz XCLK; at our 20 MHz they produce 166 2/3 MHz.
+// Correct only PLL2's multiplier to 30 (200 MHz), leaving SYS/PCLK and image
+// settings unchanged. This is not a demonstrated cure for column-pattern noise.
+// Caller holds s_lock, or is init before any other SCCB user starts.
+esp_err_t apply_adc_clock_locked(sensor_t* s) {
+    if (s->id.PID != OV5640_PID) return ESP_OK;
+    SensorRegisterIo io{s->slv_addr};
+    const esp_err_t opened = open_register_io(io);
+    if (opened != ESP_OK) return opened;
+    const auto correction = streamer::ov5640::ensure_adc_200mhz(io, XCLK_HZ);
+    const esp_err_t cleanup = close_register_io(io);
+    if (correction.result != streamer::ov5640::AdcResult::Ok) {
+        ESP_LOGE(TAG, "OV5640 ADC clock failed/unverified: step %u, %s",
+            static_cast<unsigned>(correction.result), esp_err_to_name(io.error));
+        return io.error != ESP_OK ? io.error : ESP_FAIL;
+    }
+    if (cleanup != ESP_OK) return cleanup;
+    ESP_LOGI(TAG, "OV5640 ADC clock verified: 200 MHz, XCLK 20 MHz");
+    return ESP_OK;
+}
+
+
+// Opt-in only: correcting the old 50 Hz table changes low-light exposure.
+// The receiver never chooses a region, and the default makes no extra I/O.
+esp_err_t apply_banding_locked(sensor_t* s, uint8_t fs) {
+#if defined(CONFIG_STREAMER_OV5640_BANDING_50HZ) || defined(CONFIG_STREAMER_OV5640_BANDING_60HZ)
+    if (s->id.PID != OV5640_PID) return ESP_OK;
+    if (!stream_clock(fs)) return ESP_ERR_NOT_SUPPORTED;
+    SensorRegisterIo io{s->slv_addr};
+    const esp_err_t opened = open_register_io(io);
+    if (opened != ESP_OK) return opened;
+#ifdef CONFIG_STREAMER_OV5640_BANDING_50HZ
+    constexpr auto mode = streamer::ov5640::BandingMode::Hz50;
+    constexpr unsigned hz = 50;
+#else
+    constexpr auto mode = streamer::ov5640::BandingMode::Hz60;
+    constexpr unsigned hz = 60;
+#endif
+    const auto update = streamer::ov5640::configure_banding(io, fs == 0 ? 80'000'000U : 70'000'000U, mode);
+    const esp_err_t cleanup = close_register_io(io);
+    if (update.result != streamer::ov5640::BandingResult::Ok) {
+        ESP_LOGE(TAG, "OV5640 banding failed: step %u, rollback %s",
+            static_cast<unsigned>(update.result),
+            !update.rollback_attempted ? "not needed" : update.rollback_verified ? "verified" : "unverified");
+        return io.error != ESP_OK ? io.error : ESP_FAIL;
+    }
+    if (cleanup != ESP_OK) return cleanup;
+    ESP_LOGI(TAG, "OV5640 %u Hz banding: HTS %u VTS %u, steps %u/%u max %u/%u",
+        hz, update.hts, update.vts, update.timing.step50, update.timing.step60,
+        update.timing.max50, update.timing.max60);
+    return ESP_OK;
+#else
+    (void)s;
+    (void)fs;
+    return ESP_OK;
+#endif
+}
 
 // Caller holds s_lock (or is init). ESP_ERR_NOT_SUPPORTED without the hook.
 esp_err_t set_pll_locked(sensor_t* s, const Pll& p) {
@@ -91,12 +233,18 @@ esp_err_t set_pll_locked(sensor_t* s, const Pll& p) {
 
 // Caller holds s_lock (or is init). After set_framesize: re-apply the
 // per-size clock override where there is one.
-void apply_clock_locked(sensor_t* s, uint8_t fs) {
-    if (s->id.PID != OV5640_PID || fs != kOv5640OverrideFs) return;
-    if (set_pll_locked(s, kOv5640Fs0Pll) == ESP_OK)
-        ESP_LOGI(TAG, "ov5640 fs%u clock: sys_div %d -> ~35 fps", fs, kOv5640Fs0Pll.sys_div);
-    else
-        ESP_LOGW(TAG, "ov5640 fs%u clock override failed; driver clock (~20 fps) stays", fs);
+esp_err_t apply_clock_locked(sensor_t* s, uint8_t fs) {
+    if (s->id.PID != OV5640_PID) return ESP_OK;
+    const Pll* profile = stream_clock(fs);
+    if (!profile) return kBandingCorrection ? ESP_ERR_NOT_SUPPORTED : ESP_OK;
+    const esp_err_t err = set_pll_locked(s, *profile);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "ov5640 fs%u stream clock: mult %d sys_div %d pclk_div %d",
+                 fs, profile->mult, profile->sys_div, profile->pclk_div);
+        return apply_banding_locked(s, fs);
+    }
+    ESP_LOGW(TAG, "ov5640 fs%u stream clock write failed", fs);
+    return kBandingCorrection ? err : ESP_OK;  // retain legacy behavior when disabled
 }
 
 // --------------------------------------------------------- white balance ----
@@ -197,17 +345,17 @@ void restore_after_resize_locked(sensor_t* s) {
     s->set_colorbar(s, s->status.colorbar);
 }
 
-// Next driver frame (resize leftovers skipped), or nullptr after timeout_ms.
-// WHY poll instead of esp_camera_fb_get() alone: fb_get waits up to 4 s, and
-// the only caller is the video task, which must keep sending STATUS, polling
-// accept() and enforcing timeouts if the sensor stalls. fb_get is called only
-// once a frame is queued, so it returns at once (single consumer). The poll
-// adds at most one 1 ms tick of latency.
+// Bound the complete camera wait, including malformed JPEG rejection and
+// frames discarded after resizing. Queue availability alone cannot prevent the
+// upstream getter from waiting four seconds after rejecting a queued JPEG.
 camera_fb_t* take(uint32_t timeout_ms) {
     const TickType_t start = xTaskGetTickCount();
+    const TickType_t budget = pdMS_TO_TICKS(timeout_ms);
     for (;;) {
+        const TickType_t elapsed = xTaskGetTickCount() - start;
+        if (elapsed >= budget) return nullptr;
         if (esp_camera_available_frames()) {
-            camera_fb_t* fb = esp_camera_fb_get();
+            camera_fb_t* fb = streamer_camera_fb_get_timeout(budget - elapsed);
             if (!fb) return nullptr;
             if (s_drop.load() > 0) {
                 s_drop.fetch_sub(1);
@@ -216,7 +364,6 @@ camera_fb_t* take(uint32_t timeout_ms) {
             }
             return fb;
         }
-        if (xTaskGetTickCount() - start >= pdMS_TO_TICKS(timeout_ms)) return nullptr;
         vTaskDelay(1);
     }
 }
@@ -278,10 +425,18 @@ esp_err_t init(const Options& opt) {
     if (s->id.PID != OV2640_PID && s->id.PID != OV5640_PID)
         ESP_LOGW(TAG, "untested sensor PID 0x%04x; continuing", s->id.PID);
 
-    // Frame size first: its register tables rewrite the PLL and colour
-    // settings. Apply the clock override and colour defaults afterwards.
-    if (s->set_framesize(s, kFsMap[opt.framesize]) != 0) ESP_LOGW(TAG, "set_framesize failed");
-    else apply_clock_locked(s, opt.framesize);
+    if (kBandingCorrection && s->id.PID == OV5640_PID && !stream_clock(opt.framesize))
+        return ESP_ERR_NOT_SUPPORTED;
+    err = apply_adc_clock_locked(s);
+    if (err != ESP_OK) return err;
+    // set_framesize rewrites the PLL; restore the measured profile afterwards.
+    if (s->set_framesize(s, kFsMap[opt.framesize]) != 0) {
+        ESP_LOGW(TAG, "set_framesize failed");
+        if (kBandingCorrection && s->id.PID == OV5640_PID) return ESP_FAIL;
+    } else {
+        err = apply_clock_locked(s, opt.framesize);
+        if (err != ESP_OK) return err;
+    }
     s->set_quality(s, opt.quality);
     apply_defaults_locked(s, opt.vflip, opt.hmirror);
     // Software AWB owns the gains on the supported sensors; other sensors
@@ -304,16 +459,39 @@ esp_err_t configure(uint8_t fs, uint8_t q) {
     if (!streamer::valid_framesize(fs) || !streamer::valid_quality(q)) return ESP_ERR_INVALID_ARG;
     if (!s_ready) return ESP_ERR_INVALID_STATE;
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    // A queued caller may have waited behind a failed timing restoration.
+    if (!s_ready) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
     sensor_t* s = esp_camera_sensor_get();
     esp_err_t err = ESP_OK;
+    const bool corrected = kBandingCorrection && s->id.PID == OV5640_PID;
+    if (corrected && !stream_clock(fs)) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     if (fs != s_fs) {
+        const uint8_t previous_fs = s_fs;
         if (s->set_framesize(s, kFsMap[fs]) != 0) {
             err = ESP_FAIL;
         } else {
             restore_after_resize_locked(s);  // OV2640: dcw/colorbar
-            apply_clock_locked(s, fs);       // OV5640: fs0 PLL override
-            s_fs = fs;
+            err = apply_clock_locked(s, fs);  // OV5640: measured PLL and optional banding
+        }
+        if (err == ESP_OK) s_fs = fs;
+        if (err == ESP_OK || corrected) {
             s_drop = DROP_AFTER_RESIZE;
+        }
+        if (err != ESP_OK && corrected) {
+            // A size/PLL change already touched the sensor. Restore the last
+            // known profile once; never stream with an unverified mixed table.
+            const bool restored = s->set_framesize(s, kFsMap[previous_fs]) == 0 &&
+                                  apply_clock_locked(s, previous_fs) == ESP_OK;
+            if (!restored) {
+                s_ready = false;
+                ESP_LOGE(TAG, "camera timing restore failed; reboot required");
+            }
         }
     }
     if (err == ESP_OK && q != s_q) {
@@ -356,13 +534,8 @@ bool grab(Frame& out, uint32_t timeout_ms) {
     if (!s_ready) return false;
     camera_fb_t* fb = take(timeout_ms);
     if (!fb) return false;
-    // WHY copy and return the driver buffer at once: in CAMERA_GRAB_LATEST the
-    // driver keeps capturing only while a buffer is free. Holding one of the
-    // two across a slow send_all stops capture after one more frame, so the
-    // next grab would get a frame that is a whole send old. With the buffer
-    // back, the queue always holds the newest frame. The PSRAM copy costs
-    // about 1-2 ms at VGA; fb_count = 3 would not help (queue depth is
-    // fb_count - 1, so a held buffer still stalls capture).
+    // Return capture memory before network I/O. Three slots with a one-frame
+    // latest queue leave a spare while this copy briefly owns a driver slot.
     const size_t len = fb->len <= JPEG_BUF ? fb->len : 0;
     if (len) std::memcpy(s_copy, fb->buf, len);
     out.data = s_copy;

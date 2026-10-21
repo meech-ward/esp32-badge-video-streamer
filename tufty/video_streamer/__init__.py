@@ -20,8 +20,11 @@ CREDITS = 1
 FRAME_CAP = 32 * 1024
 BACKOFF_MAX_MS = 1000
 SPIN_MS = 12
-GC_EVERY = 30
+# Automatic GC stays enabled; amortise explicit full collections instead of
+# inserting one into the display path almost every second.
+GC_EVERY = 300
 GC_IDLE_MS = 1000
+SERIAL_DIAGNOSTICS = False
 
 ticks_ms = time.ticks_ms
 ticks_diff = time.ticks_diff
@@ -39,7 +42,7 @@ class App:
     def __init__(self):
         now = ticks_ms()
         self.overlay = _overlay.Overlay(ticks_diff)
-        self.log = _telemetry.Logger(ticks_ms)
+        self.log = _telemetry.Logger(ticks_ms) if SERIAL_DIAGNOSTICS else None
         self.stats = _telemetry.Stats(ticks_diff)
         cfg = _load_wifi_config()
         self.wifi = net.Wifi(cfg.SSID, cfg.PASSWORD, ticks_diff, log=self.log)
@@ -93,8 +96,11 @@ class App:
             self.repaint = True
 
         s = self.stream
+        frame_changed = False
         if self.link.poll(now):
             if s.poll(now):
+                # A rejected JPEG can already have changed framebuffer pixels.
+                frame_changed = True
                 drew = self.decode()
                 # Pixels are already in screen RAM: return credit before display
                 # presentation so the ESP can prepare the next frame immediately.
@@ -110,6 +116,7 @@ class App:
         # Toggling HUD off restores the retained JPEG without awarding another
         # credit. If the next JPEG has begun overwriting it, wait for that frame.
         if self.repaint and s.frame_valid and self.shown:
+            frame_changed = True
             self.decode()
 
         if not s.connected() or self.shown_connect != s.connects:
@@ -118,10 +125,11 @@ class App:
             self.draw_status(now)
         else:
             self.overlay.refresh(now, self)
-            self.overlay.draw(self, now)
-        line = self.stats.line(now, self)
-        if line is not None:
-            print(line)
+            self.overlay.draw(self, now, frame_changed=frame_changed)
+        if SERIAL_DIAGNOSTICS:
+            line = self.stats.line(now, self)
+            if line is not None:
+                print(line)
         self.t_end = ticks_ms()
         return None
 

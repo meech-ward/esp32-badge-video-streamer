@@ -30,24 +30,26 @@ class ProtocolError(ValueError):
     pass
 
 
-def pack_hello(framesize=FS_QQVGA, quality=6, credits=1):
+def pack_hello(framesize=FS_QQVGA, quality=6, credits=1, max_frame_kib=0):
     if framesize not in FRAME_SIZES:
         raise ProtocolError("framesize")
     if not 4 <= quality <= 63:
         raise ProtocolError("quality")
     if not 1 <= credits <= MAX_CREDITS:
         raise ProtocolError("credits")
-    return struct.pack(HELLO_FMT, HELLO_MAGIC, VERSION, framesize, quality, credits, 0)
+    if not 0 <= max_frame_kib <= MAX_PAYLOAD // 1024:
+        raise ProtocolError("frame limit")
+    return struct.pack(HELLO_FMT, HELLO_MAGIC, VERSION, framesize, quality, credits, max_frame_kib)
 
 
 def unpack_hello(buf):
     if len(buf) != HELLO_SIZE:
         raise ProtocolError("hello size")
-    magic, version, fs, quality, credits, reserved = struct.unpack(HELLO_FMT, buf)
+    magic, version, fs, quality, credits, max_frame_kib = struct.unpack(HELLO_FMT, buf)
     if magic != HELLO_MAGIC or version != VERSION:
         raise ProtocolError("hello magic/version")
     if (fs not in FRAME_SIZES or not 4 <= quality <= 63
-            or not 1 <= credits <= MAX_CREDITS or reserved != 0):
+            or not 1 <= credits <= MAX_CREDITS or max_frame_kib > MAX_PAYLOAD // 1024):
         raise ProtocolError("hello field")
     return fs, quality, credits
 

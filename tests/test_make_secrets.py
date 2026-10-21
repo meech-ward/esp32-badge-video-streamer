@@ -15,7 +15,8 @@ spec.loader.exec_module(S)
 @pytest.fixture
 def targets(tmp_path, monkeypatch):
     targets = {"esp": tmp_path / "esp/main/wifi_secrets.h",
-               "tufty": tmp_path / "tufty/video_streamer/wifi_config.py"}
+               "tufty": tmp_path / "tufty/video_streamer/wifi_config.py",
+               "native": tmp_path / "native/secrets.h"}
     monkeypatch.setattr(S, "TARGETS", targets)
     return targets
 
@@ -27,19 +28,20 @@ def test_one_private_pair_only(targets, capsys):
     password = re.search(r'#define STREAM_AP_PASSWORD "([A-Za-z0-9]{20})"', esp).group(1)
     assert '#define STREAM_AP_SSID "tufty-video"' in esp
     assert 'SSID = "tufty-video"' in badge and 'PASSWORD = "%s"' % password in badge
+    assert '#define NATIVE_WIFI_PASSWORD "%s"' % password in targets["native"].read_text()
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in targets.values())
     assert password not in capsys.readouterr().out
     assert sorted(p for p in targets["esp"].parents[2].rglob("*") if p.is_file()) == sorted(targets.values())
 
 
-@pytest.mark.parametrize("existing", ["esp", "tufty"])
+@pytest.mark.parametrize("existing", ["esp", "tufty", "native"])
 def test_refuses_even_one_existing_file_without_changing_either(targets, existing, capsys):
     target = targets[existing]
     target.parent.mkdir(parents=True)
     target.write_text("old private configuration")
     assert S.main([]) == 1
     assert target.read_text() == "old private configuration"
-    assert not targets["tufty" if existing == "esp" else "esp"].exists()
+    assert all(not path.exists() for key, path in targets.items() if key != existing)
     assert "old private" not in capsys.readouterr().out
 
 

@@ -29,10 +29,24 @@ def test_hello_rejects_invalid_configuration(fields):
 
 
 @pytest.mark.parametrize("wire", [b"", b"VH", b"XH\1\0\6\1\0\0",
-                                 b"VH\2\0\6\1\0\0", b"VH\1\0\6\1\1\0"])
+                                 b"VH\2\0\6\1\0\0", b"VH\1\0\6\1\x81\0"])
 def test_hello_rejects_invalid_packet(wire):
     with pytest.raises(P.ProtocolError):
         P.unpack_hello(wire)
+
+
+@pytest.mark.parametrize("limit", [0, 1, 32, 64, 128])
+def test_receiver_limit_keeps_original_hello_shape(limit):
+    wire = P.pack_hello(P.FS_QVGA, 6, 1, limit)
+    assert len(wire) == P.HELLO_SIZE
+    assert struct.unpack_from("<H", wire, 6)[0] == limit
+    assert P.unpack_hello(wire) == (P.FS_QVGA, 6, 1)
+
+
+@pytest.mark.parametrize("limit", [-1, 129, 65536])
+def test_receiver_limit_rejects_out_of_range_values(limit):
+    with pytest.raises(P.ProtocolError):
+        P.pack_hello(max_frame_kib=limit)
 
 
 @pytest.mark.parametrize("kind,length", [(3, 10), (P.TYPE_FRAME, P.MAX_PAYLOAD + 1),

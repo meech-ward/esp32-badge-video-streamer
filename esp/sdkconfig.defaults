@@ -26,9 +26,13 @@ CONFIG_SPIRAM_USE_MALLOC=y
 # because the frame buffers live in PSRAM.
 # CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is not set
 
-# --- Diagnostic logs on native USB ---
+# --- Bounded warning/error logs on native USB ---
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_LOG_VERSION_1=y
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
+CONFIG_LOG_BOOTLOADER_LEVEL_WARN=y
 
 # --- Wi-Fi / lwIP tuned for TX throughput (one JPEG stream out) ---
 CONFIG_ESP_WIFI_IRAM_OPT=y
@@ -40,6 +44,8 @@ CONFIG_ESP_WIFI_TX_BA_WIN=32
 CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
 # ~32 KB holds one large QVGA frame, so a whole frame can be queued in one go.
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+# Dedicated receiver link: match the measured 10 ms TCP timer profile.
+CONFIG_LWIP_TCP_TMR_INTERVAL=10
 # SO_LINGER {1,0} lets video_tx reset a dropped client, freeing that 32 KB of
 # queued internal-RAM pbufs at once instead of retransmitting it for minutes.
 CONFIG_LWIP_SO_LINGER=y
@@ -52,3 +58,6 @@ CONFIG_CAMERA_CORE1=y
 CONFIG_OV3660_SUPPORT=y
 CONFIG_OV2640_SUPPORT=y
 CONFIG_OV5640_SUPPORT=y
+
+# Direct DMA into PSRAM remains an opt-in, unmeasured hardware profile.
+# CONFIG_CAMERA_PSRAM_DMA is not set

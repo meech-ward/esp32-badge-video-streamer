@@ -3,9 +3,10 @@ menu "ESP32 badge video streamer"
     config STREAMER_AP_CHANNEL
         int "SoftAP Wi-Fi channel (fixed)"
         range 1 13
-        default 6
+        default 11
         help
-            Fixed so the badge never scans. 1, 6 and 11 do not overlap.
+            Fixed so the badge never scans. Choose a clear local channel;
+            1, 6 and 11 do not overlap.
 
     config STREAMER_CAM_VFLIP
         bool "Flip the camera image vertically"
@@ -26,5 +27,37 @@ menu "ESP32 badge video streamer"
         int "JPEG quality at boot (4..63, lower is better)"
         range 4 63
         default 6
+
+    config STREAMER_CAMERA_FB_COUNT
+        int "Camera frame slots"
+        range 2 3
+        default 3
+        help
+            Three slots leave a spare during the send copy. The completed
+            frame queue remains one entry, so old frames do not accumulate.
+
+    config STREAMER_AWB_SETTLED_PERIOD_MS
+        int "Software AWB check interval once settled (ms)"
+        range 330 5000
+        default 1000
+        help
+            Active convergence samples every 330 ms; stable colour uses this
+            slower interval to save JPEG decode work.
+
+    choice STREAMER_OV5640_BANDING
+        prompt "OV5640 light anti-flicker timing"
+        default STREAMER_OV5640_BANDING_LEGACY
+        help
+            Keep legacy timing by default. Optional corrected modes support
+            the measured QQVGA/QVGA clocks only; choose the lighting frequency.
+            Corrected 50 Hz may shorten low-light exposure and darken the image.
+
+        config STREAMER_OV5640_BANDING_LEGACY
+            bool "Keep existing driver timing"
+        config STREAMER_OV5640_BANDING_50HZ
+            bool "Correct timing for 50 Hz lighting"
+        config STREAMER_OV5640_BANDING_60HZ
+            bool "Correct timing for 60 Hz lighting"
+    endchoice
 
 endmenu

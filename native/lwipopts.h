@@ -1,0 +1,54 @@
+#pragma once
+
+#ifndef NATIVE_TCP_TIMER_MS
+#define NATIVE_TCP_TIMER_MS 250
+#endif
+#if NATIVE_TCP_TIMER_MS < 5 || NATIVE_TCP_TIMER_MS > 250
+#error "NATIVE_TCP_TIMER_MS must be from 5 through 250 milliseconds"
+#endif
+#define TCP_TMR_INTERVAL NATIVE_TCP_TIMER_MS
+
+#if defined(NATIVE_TRACE_TCP_INGRESS) && NATIVE_TRACE_TCP_INGRESS
+#define LWIP_HOOK_FILENAME "tcp_ingress_hook.h"
+#endif
+
+#define NO_SYS 1
+#define LWIP_SOCKET 0
+#define LWIP_NETCONN 0
+#define LWIP_TCP 1
+#define LWIP_UDP 1
+#define LWIP_ICMP 1
+#define LWIP_RAW 1
+#define LWIP_DHCP 1
+#define LWIP_DNS 0
+#define LWIP_IPV4 1
+#define LWIP_IPV6 0
+#define LWIP_NETIF_STATUS_CALLBACK 1
+#define LWIP_NETIF_LINK_CALLBACK 1
+#define LWIP_NETIF_HOSTNAME 1
+#define LWIP_NETIF_TX_SINGLE_PBUF 1
+#define LWIP_ARP 1
+#define ARP_TABLE_SIZE 4
+#define ARP_QUEUEING 0
+#define MEM_ALIGNMENT 4
+#define MEM_SIZE 16384
+#define MEMP_NUM_TCP_PCB 2
+#define MEMP_NUM_TCP_PCB_LISTEN 0
+#define MEMP_NUM_TCP_SEG 32
+#define MEMP_NUM_UDP_PCB 2
+#define PBUF_POOL_SIZE 16
+#define TCP_MSS 1460
+#define TCP_WND (8 * TCP_MSS)
+#define TCP_SND_BUF (4 * TCP_MSS)
+#define TCP_SND_QUEUELEN 16
+#define TCP_QUEUE_OOSEQ 1
+#define TCP_OOSEQ_MAX_PBUFS 4
+#define LWIP_TCP_KEEPALIVE 0
+#define LWIP_TCP_TIMESTAMPS 0
+#define LWIP_CHECKSUM_ALGORITHM 3
+#define LWIP_STATS 0
+#define LWIP_PROVIDE_ERRNO 1
+#define LWIP_TIMEVAL_PRIVATE 0
+#define DHCP_DOES_ARP_CHECK 0
+#define LWIP_DHCP_DOES_ACD_CHECK 0
+#define ETH_PAD_SIZE 0
